@@ -1,6 +1,6 @@
 package main
 
-import "github.com/uccismorph/bing_background_go/bing"
+import "github.com/uccismorph/bing-background-go/bing"
 
 func main() {
 	bing := bing.NewPicture()
