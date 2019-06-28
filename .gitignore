@@ -12,4 +12,6 @@
 *.out
 
 bing_background
+background/
 bin/
+.DS_Store

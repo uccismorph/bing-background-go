@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,7 +31,7 @@ func NewPicture() *Picture {
 					return net.DialTimeout(network, addr, 5*time.Second)
 				},
 			},
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 		cfg: GetConfig(),
 	}
@@ -62,13 +63,23 @@ func (p *Picture) Run() {
 		log.Printf("retrive pic desc error: %s", err.Error())
 		return
 	}
+	log.Printf("total pic num: %d", len(desc.Images))
+	wg := sync.WaitGroup{}
 	for i, _ := range desc.Images {
-		err = p.download(desc.Images[i].PicURL)
-		if err != nil {
-			log.Printf("download pic error: %s", err.Error())
-			return
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			err = p.download(desc.Images[i].PicURL)
+			if err != nil {
+				log.Printf("download pic error: %s", err.Error())
+				return
+			}
+		}(i)
+		if i%5 == 4 {
+			wg.Wait()
 		}
 	}
+	wg.Wait()
 }
 
 func (p *Picture) retriveDesc() (*PictureDesc, error) {
@@ -94,7 +105,13 @@ func (p *Picture) retriveDesc() (*PictureDesc, error) {
 
 func (p *Picture) download(picURL string) error {
 	if !strings.HasPrefix(picURL, "http") {
-		picURL = "http://www.bing.com" + picURL
+		picURL = "http://cn.bing.com" + picURL
+	} else {
+		raw, err := url.Parse(picURL)
+		if err != nil {
+			return err
+		}
+		picURL = "http://cn.bing.com" + raw.RequestURI()
 	}
 	pic, err := url.Parse(picURL)
 	if err != nil {
@@ -111,7 +128,7 @@ func (p *Picture) download(picURL string) error {
 	picName = p.cfg.PicDir + "/" + picName
 	resp, err := p.client.Get(picURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("[%s] http error: %s", picURL, err.Error())
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -119,12 +136,13 @@ func (p *Picture) download(picURL string) error {
 	}
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("[%s] read body error: %s", picURL, err.Error())
 	}
 	err = ioutil.WriteFile(picName, data, 0644)
 	if err != nil {
 		return err
 	}
+	log.Printf("finish pic file: %s", picName)
 	return nil
 }
 
