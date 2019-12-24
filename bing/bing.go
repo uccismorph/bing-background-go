@@ -13,13 +13,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/uccismorph/bing-background-go/record"
 )
 
 // Picture xxx
 type Picture struct {
 	client *http.Client
 	cfg    *AppConfig
-	url    *url.URL
+	urls   []*url.URL
 }
 
 // NewPicture xxx
@@ -35,36 +37,71 @@ func NewPicture() *Picture {
 		},
 		cfg: GetConfig(),
 	}
+	if cfg.UseRecordDB {
+		err := record.StartRecorder()
+		if err != nil {
+			msg := fmt.Sprintf("recorde db error: %s", err.Error())
+			panic(msg)
+		}
+		p.cfg.DaysBehind = 0
+		p.cfg.PicNumber = record.RecordDiff()
+	}
 
 	err := os.MkdirAll(p.cfg.PicDir, 0755)
 	if err != nil {
 		msg := fmt.Sprintf("cannot mkdir: %s", err.Error())
 		panic(msg)
 	}
-	p.url, err = url.Parse("http://www.bing.com/HPImageArchive.aspx")
-	if err != nil {
-		panic(err)
-	}
-	queryString := p.url.Query()
-	queryString.Add("format", "xml")
-	queryString.Add("idx", strconv.FormatUint(p.cfg.DaysBehind, 10))
-	queryString.Add("n", strconv.FormatUint(p.cfg.PicNumber, 10))
-	queryString.Add("mkt", "ZH-CN")
-	p.url.RawQuery = queryString.Encode()
+
+	p.genURLS(int(p.cfg.PicNumber))
 
 	return p
 }
 
+var defaultTurnSize = 5
+
+func (p *Picture) genURLS(total int) {
+	leftNum := total
+	oneTurnNum := 0
+	daysBehind := p.cfg.DaysBehind
+	for leftNum > 0 {
+		url, err := url.Parse("http://www.bing.com/HPImageArchive.aspx")
+		if err != nil {
+			panic(err)
+		}
+		if leftNum > defaultTurnSize {
+			oneTurnNum = defaultTurnSize
+		} else {
+			oneTurnNum = leftNum
+		}
+		queryString := url.Query()
+		queryString.Add("format", "xml")
+		queryString.Add("idx", strconv.FormatInt(int64(daysBehind), 10))
+		queryString.Add("n", strconv.FormatInt(int64(oneTurnNum), 10))
+		queryString.Add("mkt", "ZH-CN")
+		url.RawQuery = queryString.Encode()
+		p.urls = append(p.urls, url)
+		leftNum -= defaultTurnSize
+		daysBehind += oneTurnNum
+	}
+}
+
+type errorState struct {
+	result  bool
+	errorAt int
+}
+
 // Run xxx
-func (p *Picture) Run() {
-	log.Printf("calling %s", p.url.String())
-	desc, err := p.retriveDesc()
+func (p *Picture) run(url *url.URL) bool {
+	log.Printf("calling %s", url.String())
+	desc, err := p.retriveDesc(url)
 	if err != nil {
 		log.Printf("retrive pic desc error: %s", err.Error())
-		return
+		return false
 	}
 	log.Printf("total pic num: %d", len(desc.Images))
 	wg := sync.WaitGroup{}
+	state := make(chan errorState, len(desc.Images))
 	for i, _ := range desc.Images {
 		wg.Add(1)
 		go func(i int) {
@@ -72,18 +109,46 @@ func (p *Picture) Run() {
 			err = p.download(desc.Images[i].PicURL)
 			if err != nil {
 				log.Printf("download pic error: %s", err.Error())
+				state <- errorState{
+					result:  false,
+					errorAt: i,
+				}
 				return
 			}
+			state <- errorState{
+				result:  true,
+				errorAt: -1,
+			}
 		}(i)
-		if i%5 == 4 {
-			wg.Wait()
-		}
 	}
 	wg.Wait()
+	close(state)
+	res := true
+	for s := range state {
+		if !s.result {
+			res = false
+		}
+	}
+	return res
 }
 
-func (p *Picture) retriveDesc() (*PictureDesc, error) {
-	resp, err := p.client.Get(p.url.String())
+func (p *Picture) Run() {
+	res := true
+	if len(p.urls) == 0 {
+		log.Printf("picture is up to date")
+	}
+	for _, url := range p.urls {
+		if res = p.run(url); !res {
+			break
+		}
+	}
+	if cfg.UseRecordDB {
+		record.Finish(res)
+	}
+}
+
+func (p *Picture) retriveDesc(url *url.URL) (*PictureDesc, error) {
+	resp, err := p.client.Get(url.String())
 	if err != nil {
 		return nil, err
 	}

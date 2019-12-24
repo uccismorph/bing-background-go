@@ -9,3 +9,7 @@ all:
 .PHONY: clean
 clean:
 	@rm -rf ./bin
+
+.PHONY: install
+install:
+	@cp -f bin/bing_background ~/go/bin/
