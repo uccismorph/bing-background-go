@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -18,26 +19,37 @@ type record struct {
 }
 
 type Recorder struct {
-	complete chan bool
-	finish   chan struct{}
-	rcrd     record
-	filename string
-	filemode os.FileMode
+	complete     chan bool
+	finish       chan struct{}
+	rcrd         record
+	filename     string
+	filemode     os.FileMode
+	lastDate     *time.Time
+	newDate      *time.Time
+	prevTurnDate *time.Time
+	initErr      error
 }
 
 var r *Recorder
 
-func init() {
+func InitRecorder() {
 	r = &Recorder{}
 	r.complete = make(chan bool)
 	r.finish = make(chan struct{})
 	r.filename = defaultRecordFile
+	r.lastDate = &time.Time{}
+
+	r.initErr = checkRecordFile(r.filename)
+	if r.initErr != nil {
+		r = nil
+		return
+	}
+	*r.lastDate = time.Date(r.rcrd.Year, time.Month(r.rcrd.Month), r.rcrd.Day, 0, 0, 0, 0, time.Local)
 }
 
-func StartRecorder() error {
-	err := checkRecordFile(r.filename)
-	if err != nil {
-		return err
+func StartRecorder() {
+	if r == nil {
+		return
 	}
 	go func() {
 		res := <-r.complete
@@ -48,19 +60,38 @@ func StartRecorder() error {
 		}
 		r.finish <- struct{}{}
 	}()
-
-	return nil
 }
 
 func Finish(result bool) {
+	if r == nil {
+		return
+	}
 	r.complete <- result
 	<-r.finish
 	close(r.complete)
 	close(r.finish)
 }
 
+func ProcessDate(date int) bool {
+	if r == nil {
+		return true
+	}
+	dateStr := strconv.FormatInt(int64(date), 10)
+	y, _ := strconv.ParseInt(dateStr[:4], 10, 32)
+	m, _ := strconv.ParseInt(dateStr[4:6], 10, 32)
+	d, _ := strconv.ParseInt(dateStr[6:], 10, 32)
+	thisTurn := time.Date(int(y), time.Month(m), int(d), 0, 0, 0, 0, time.Local)
+	if r.newDate == nil || thisTurn.After(*r.newDate) {
+		r.newDate = &thisTurn
+	}
+	if thisTurn.Before(*r.lastDate) {
+		return false
+	}
+	return true
+}
+
 func doRecord() {
-	t := time.Now()
+	t := r.newDate
 	r.rcrd.Year = t.Year()
 	r.rcrd.Month = int(t.Month())
 	r.rcrd.Day = t.Day()
@@ -110,8 +141,7 @@ func showRecord() {
 }
 
 func RecordDiff() int {
-	old := time.Date(r.rcrd.Year, time.Month(r.rcrd.Month), r.rcrd.Day, 0, 0, 0, 0, time.Local)
-	since := time.Since(old)
+	since := time.Since(*r.lastDate)
 	diff := int(since.Hours() / 24)
 
 	return diff

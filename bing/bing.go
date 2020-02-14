@@ -9,24 +9,26 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uccismorph/bing-background-go/record"
 )
 
-// Picture xxx
-type Picture struct {
-	client *http.Client
-	cfg    *AppConfig
-	urls   []*url.URL
+type Context struct {
+	client       *http.Client
+	cfg          *AppConfig
+	processedSet map[int]bool
+	leftNum      int
+	completeNum  int64
 }
 
-// NewPicture xxx
-func NewPicture() *Picture {
-	p := &Picture{
+func NewContext() *Context {
+	p := &Context{
 		client: &http.Client{
 			Transport: &http.Transport{
 				Dial: func(network, addr string) (net.Conn, error) {
@@ -35,14 +37,11 @@ func NewPicture() *Picture {
 			},
 			Timeout: 30 * time.Second,
 		},
-		cfg: GetConfig(),
+		cfg:          GetConfig(),
+		processedSet: make(map[int]bool),
 	}
 	if cfg.UseRecordDB {
-		err := record.StartRecorder()
-		if err != nil {
-			msg := fmt.Sprintf("recorde db error: %s", err.Error())
-			panic(msg)
-		}
+		record.InitRecorder()
 		p.cfg.DaysBehind = 0
 		p.cfg.PicNumber = record.RecordDiff()
 	}
@@ -52,38 +51,39 @@ func NewPicture() *Picture {
 		msg := fmt.Sprintf("cannot mkdir: %s", err.Error())
 		panic(msg)
 	}
-
-	p.genURLS(int(p.cfg.PicNumber))
+	p.leftNum = p.cfg.PicNumber
 
 	return p
 }
 
+func (p *Context) SetConfig(cfg *AppConfig) {
+	p.cfg = cfg
+}
+
 var defaultTurnSize = 5
 
-func (p *Picture) genURLS(total int) {
-	leftNum := total
-	oneTurnNum := 0
-	daysBehind := p.cfg.DaysBehind
-	for leftNum > 0 {
-		url, err := url.Parse("http://www.bing.com/HPImageArchive.aspx")
-		if err != nil {
-			panic(err)
-		}
-		if leftNum > defaultTurnSize {
-			oneTurnNum = defaultTurnSize
-		} else {
-			oneTurnNum = leftNum
-		}
-		queryString := url.Query()
-		queryString.Add("format", "xml")
-		queryString.Add("idx", strconv.FormatInt(int64(daysBehind), 10))
-		queryString.Add("n", strconv.FormatInt(int64(oneTurnNum), 10))
-		queryString.Add("mkt", "ZH-CN")
-		url.RawQuery = queryString.Encode()
-		p.urls = append(p.urls, url)
-		leftNum -= defaultTurnSize
-		daysBehind += oneTurnNum
-	}
+var bingArchive string = "http://www.bing.com/HPImageArchive.aspx"
+
+func composeArchiveURL(behind, picNum int) *url.URL {
+	res, _ := url.Parse(bingArchive)
+
+	queryString := res.Query()
+	queryString.Add("format", "xml")
+	queryString.Add("idx", strconv.FormatInt(int64(behind), 10))
+	queryString.Add("n", strconv.FormatInt(int64(picNum), 10))
+	queryString.Add("mkt", "ZH-CN")
+	res.RawQuery = queryString.Encode()
+
+	return res
+}
+
+func convertDate(date int) *time.Time {
+	dateStr := strconv.FormatInt(int64(date), 10)
+	y, _ := strconv.ParseInt(dateStr[:4], 10, 32)
+	m, _ := strconv.ParseInt(dateStr[4:6], 10, 32)
+	d, _ := strconv.ParseInt(dateStr[6:], 10, 32)
+	res := time.Date(int(y), time.Month(m), int(d), 0, 0, 0, 0, time.Local)
+	return &res
 }
 
 type errorState struct {
@@ -91,18 +91,23 @@ type errorState struct {
 	errorAt int
 }
 
-// Run xxx
-func (p *Picture) run(url *url.URL) bool {
+func (p *Context) processArchive(url *url.URL) bool {
 	log.Printf("calling %s", url.String())
 	desc, err := p.retriveDesc(url)
 	if err != nil {
 		log.Printf("retrive pic desc error: %s", err.Error())
 		return false
 	}
-	log.Printf("total pic num: %d", len(desc.Images))
+	log.Printf("schduled pic num: %d", len(desc.Images))
 	wg := sync.WaitGroup{}
 	state := make(chan errorState, len(desc.Images))
 	for i, _ := range desc.Images {
+		if p.hasProcessed(desc.Images[i].StartDate) {
+			log.Printf("pic[%d] has been processed", desc.Images[i].StartDate)
+			p.leftNum -= 1
+			continue
+		}
+		log.Printf("download[%d]: %s, %s", desc.Images[i].StartDate, desc.Images[i].CopyRight, desc.Images[i].PicURL)
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -119,7 +124,10 @@ func (p *Picture) run(url *url.URL) bool {
 				result:  true,
 				errorAt: -1,
 			}
+
+			atomic.AddInt64(&p.completeNum, 1)
 		}(i)
+		p.leftNum -= 1
 	}
 	wg.Wait()
 	close(state)
@@ -132,22 +140,40 @@ func (p *Picture) run(url *url.URL) bool {
 	return res
 }
 
-func (p *Picture) Run() {
-	res := true
-	if len(p.urls) == 0 {
-		log.Printf("picture is up to date")
+func (p *Context) hasProcessed(date int) bool {
+	if _, ok := p.processedSet[date]; ok {
+		return true
 	}
-	for _, url := range p.urls {
-		if res = p.run(url); !res {
+	p.processedSet[date] = true
+	return false
+}
+
+func (p *Context) Run() {
+	res := true
+	record.StartRecorder()
+	for {
+		archiveURL, remain := p.remainingArchive()
+		if !remain {
+			break
+		}
+		if res = p.processArchive(archiveURL); !res {
 			break
 		}
 	}
-	if cfg.UseRecordDB {
-		record.Finish(res)
-	}
+	record.Finish(res)
+	log.Printf("total complete: %d", p.completeNum)
 }
 
-func (p *Picture) retriveDesc(url *url.URL) (*PictureDesc, error) {
+func (p *Context) remainingArchive() (*url.URL, bool) {
+	if p.leftNum <= 0 {
+		return nil, false
+	}
+	processNum := p.cfg.PicNumber - p.leftNum
+	res := composeArchiveURL(p.cfg.DaysBehind+processNum, p.leftNum)
+	return res, true
+}
+
+func (p *Context) retriveDesc(url *url.URL) (*PictureArchive, error) {
 	resp, err := p.client.Get(url.String())
 	if err != nil {
 		return nil, err
@@ -160,23 +186,25 @@ func (p *Picture) retriveDesc(url *url.URL) (*PictureDesc, error) {
 	if err != nil {
 		return nil, err
 	}
-	picDesc := &PictureDesc{}
+	picDesc := &PictureArchive{}
 	err = xml.Unmarshal(data, picDesc)
 	if err != nil {
 		return nil, err
 	}
+	sort.Sort(sort.Reverse(picDesc))
 	return picDesc, nil
 }
 
-func (p *Picture) download(picURL string) error {
+func (p *Context) download(picURL string) error {
+	bingSite := "http://cn.bing.com"
 	if !strings.HasPrefix(picURL, "http") {
-		picURL = "http://cn.bing.com" + picURL
+		picURL = bingSite + picURL
 	} else {
 		raw, err := url.Parse(picURL)
 		if err != nil {
 			return err
 		}
-		picURL = "http://cn.bing.com" + raw.RequestURI()
+		picURL = bingSite + raw.RequestURI()
 	}
 	pic, err := url.Parse(picURL)
 	if err != nil {
@@ -211,13 +239,33 @@ func (p *Picture) download(picURL string) error {
 	return nil
 }
 
-// PictureDesc xxx
-type PictureDesc struct {
-	XMLName xml.Name           `xml:"images"`
-	Images  []PictureDescImage `xml:"image"`
+// PictureArchive xxx
+type PictureArchive struct {
+	XMLName xml.Name       `xml:"images"`
+	Images  []*PictureDesc `xml:"image"`
 }
 
-// PictureDescImage xxx
-type PictureDescImage struct {
-	PicURL string `xml:"url"`
+// PictureDesc xxx
+type PictureDesc struct {
+	PicURL    string `xml:"url"`
+	StartDate int    `xml:"startdate"`
+	HeadLine  string `xml:"headline"`
+	CopyRight string `xml:"copyright"`
+}
+
+func (p *PictureArchive) Len() int {
+	return len(p.Images)
+}
+
+func (p *PictureArchive) Less(i, j int) bool {
+	if p.Images[i].StartDate-p.Images[j].StartDate < 0 {
+		return true
+	}
+	return false
+}
+
+func (p *PictureArchive) Swap(i, j int) {
+	p.Images[i], p.Images[j] = p.Images[j], p.Images[i]
+	log.Printf("i = %d, startdate: %d", i, p.Images[i].StartDate)
+	log.Printf("j = %d, startdate: %d", j, p.Images[j].StartDate)
 }

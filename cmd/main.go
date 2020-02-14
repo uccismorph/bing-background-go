@@ -5,6 +5,6 @@ import (
 )
 
 func main() {
-	bing := bing.NewPicture()
-	bing.Run()
+	task := bing.NewContext()
+	task.Run()
 }
