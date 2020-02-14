@@ -25,6 +25,7 @@ type Context struct {
 	processedSet map[int]bool
 	leftNum      int
 	completeNum  int64
+	latestDate   int
 }
 
 func NewContext() *Context {
@@ -141,6 +142,9 @@ func (p *Context) processArchive(url *url.URL) bool {
 }
 
 func (p *Context) hasProcessed(date int) bool {
+	if p.latestDate < date {
+		p.latestDate = date
+	}
 	if _, ok := p.processedSet[date]; ok {
 		return true
 	}
@@ -160,7 +164,7 @@ func (p *Context) Run() {
 			break
 		}
 	}
-	record.Finish(res)
+	record.Finish(res, convertDate(p.latestDate))
 	log.Printf("total complete: %d", p.completeNum)
 }
 

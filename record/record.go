@@ -62,10 +62,11 @@ func StartRecorder() {
 	}()
 }
 
-func Finish(result bool) {
+func Finish(result bool, newDate *time.Time) {
 	if r == nil {
 		return
 	}
+	r.newDate = newDate
 	r.complete <- result
 	<-r.finish
 	close(r.complete)
