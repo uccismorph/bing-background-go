@@ -102,6 +102,7 @@ func (p *Context) processArchive(url *url.URL) bool {
 	log.Printf("schduled pic num: %d", len(desc.Images))
 	wg := sync.WaitGroup{}
 	state := make(chan errorState, len(desc.Images))
+	oldComplete := p.completeNum
 	for i, _ := range desc.Images {
 		if p.hasProcessed(desc.Images[i].StartDate) {
 			log.Printf("pic[%d] has been processed", desc.Images[i].StartDate)
@@ -137,6 +138,10 @@ func (p *Context) processArchive(url *url.URL) bool {
 		if !s.result {
 			res = false
 		}
+	}
+	if oldComplete == p.completeNum {
+		log.Printf("no more picture")
+		p.leftNum = 0
 	}
 	return res
 }
