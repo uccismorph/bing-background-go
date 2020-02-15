@@ -79,6 +79,9 @@ func composeArchiveURL(behind, picNum int) *url.URL {
 }
 
 func convertDate(date int) *time.Time {
+	if date == 0 {
+		return nil
+	}
 	dateStr := strconv.FormatInt(int64(date), 10)
 	y, _ := strconv.ParseInt(dateStr[:4], 10, 32)
 	m, _ := strconv.ParseInt(dateStr[4:6], 10, 32)
