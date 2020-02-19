@@ -47,6 +47,10 @@ func InitRecorder() {
 	*r.lastDate = time.Date(r.rcrd.Year, time.Month(r.rcrd.Month), r.rcrd.Day, 0, 0, 0, 0, time.Local)
 }
 
+func LastDate() *time.Time {
+	return r.lastDate
+}
+
 func StartRecorder() {
 	if r == nil {
 		return

@@ -45,6 +45,9 @@ func NewContext() *Context {
 		record.InitRecorder()
 		p.cfg.DaysBehind = 0
 		p.cfg.PicNumber = record.RecordDiff()
+		lastDate := translateTime(record.LastDate())
+		log.Printf("memo lastDate: %d", lastDate)
+		p.processedSet[lastDate] = true
 	}
 
 	err := os.MkdirAll(p.cfg.PicDir, 0755)
@@ -88,6 +91,14 @@ func convertDate(date int) *time.Time {
 	d, _ := strconv.ParseInt(dateStr[6:], 10, 32)
 	res := time.Date(int(y), time.Month(m), int(d), 0, 0, 0, 0, time.Local)
 	return &res
+}
+
+func translateTime(t *time.Time) int {
+	if t == nil {
+		return 0
+	}
+	date := t.Year()*10000 + int(t.Month())*100 + t.Day()
+	return date
 }
 
 type errorState struct {
