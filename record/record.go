@@ -96,14 +96,21 @@ func ProcessDate(date int) bool {
 }
 
 func doRecord() {
+	var err error
+	defer func() {
+		if err != nil {
+			log.Printf("Warning: incomplete record [%s]", err.Error())
+		}
+	}()
+	if r.newDate == nil {
+		err = fmt.Errorf("undetermined record date")
+		return
+	}
 	t := r.newDate
 	r.rcrd.Year = t.Year()
 	r.rcrd.Month = int(t.Month())
 	r.rcrd.Day = t.Day()
-	err := updateRecordFile(r.filename)
-	if err != nil {
-		log.Printf("Warning: incomplete record [%s]", err.Error())
-	}
+	err = updateRecordFile(r.filename)
 }
 
 func rollback() {

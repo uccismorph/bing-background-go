@@ -5,6 +5,7 @@ all:
 	@mkdir -p bin
 	@go build -o bin/bing_background $(target_package)
 	@cp bing/config.json bin/config.json
+	@cp record/record.db.json bin/record.db
 
 .PHONY: clean
 clean:
