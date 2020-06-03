@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/uccismorph/bing-background-go/record"
+	"github.com/uccmorph/bing-background-go/record"
 )
 
 type Context struct {

@@ -41,6 +41,7 @@ func InitRecorder() {
 
 	r.initErr = checkRecordFile(r.filename)
 	if r.initErr != nil {
+		log.Printf("%s", r.initErr)
 		r = nil
 		return
 	}
@@ -153,6 +154,12 @@ func showRecord() {
 }
 
 func RecordDiff() int {
+	if r == nil {
+		log.Fatalf("recorder is not initialized")
+	}
+	if r.lastDate == nil {
+		log.Fatalf("last date is not fetched")
+	}
 	since := time.Since(*r.lastDate)
 	diff := int(since.Hours() / 24)
 

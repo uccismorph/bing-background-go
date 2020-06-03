@@ -1,4 +1,4 @@
-target_package := github.com/uccismorph/bing-background-go/cmd
+target_package := github.com/uccmorph/bing-background-go/cmd
 config_file := bing/config.json
 
 all:
