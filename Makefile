@@ -2,7 +2,7 @@ target_package := github.com/uccmorph/bing-background-go/cmd
 config_file := bing/config.json
 
 all:
-	@mkdir -p bin
+	@mkdir bin
 	@go build -o bin/bing_background $(target_package)
 	@cp bing/config.json bin/config.json
 	@cp record/record.db.json bin/record.db
